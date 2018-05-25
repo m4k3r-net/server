@@ -24,6 +24,7 @@
 namespace OCA\DAV\Tests\unit\CalDAV\Schedule;
 
 use OCA\DAV\CalDAV\Schedule\Plugin;
+use OCA\DAV\Connector\Sabre\Principal;
 use Sabre\DAV\Server;
 use Sabre\DAV\Xml\Property\Href;
 use Test\TestCase;
@@ -33,13 +34,16 @@ class PluginTest extends TestCase  {
 	private $plugin;
 	/** @var Server|\PHPUnit_Framework_MockObject_MockObject */
 	private $server;
+	/** @var Principal|\PHPUnit_Framework_MockObject_MockObject */
+	private $principalBackend;
 
 	public function setUp() {
 		parent::setUp();
 
 		$this->server = $this->createMock(Server::class);
+		$this->principalBackend = $this->createMock(Principal::class);
 
-		$this->plugin = new Plugin();
+		$this->plugin = new Plugin($this->principalBackend);
 		$this->plugin->initialize($this->server);
 	}
 

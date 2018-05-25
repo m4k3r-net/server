@@ -57,6 +57,9 @@ class Principal implements BackendInterface {
 	/** @var string */
 	private $principalPrefix;
 
+	/** @var string */
+	private $groupPrincipalPrefix;
+
 	/** @var bool */
 	private $hasGroups;
 
@@ -66,17 +69,20 @@ class Principal implements BackendInterface {
 	 * @param IShareManager $shareManager
 	 * @param IUserSession $userSession
 	 * @param string $principalPrefix
+	 * @param string $groupPrincipalPrefix
 	 */
 	public function __construct(IUserManager $userManager,
 								IGroupManager $groupManager,
 								IShareManager $shareManager,
 								IUserSession $userSession,
-								$principalPrefix = 'principals/users/') {
+								$principalPrefix = 'principals/users/',
+								$groupPrincipalPrefix = 'principals/groups/') {
 		$this->userManager = $userManager;
 		$this->groupManager = $groupManager;
 		$this->shareManager = $shareManager;
 		$this->userSession = $userSession;
 		$this->principalPrefix = trim($principalPrefix, '/');
+		$this->groupPrincipalPrefix = trim($groupPrincipalPrefix, '/');
 		$this->hasGroups = ($principalPrefix === 'principals/users/');
 	}
 
@@ -122,7 +128,14 @@ class Principal implements BackendInterface {
 			if ($user !== null) {
 				return $this->userToPrincipal($user);
 			}
+		} elseif ($prefix === $this->groupPrincipalPrefix) {
+			$group = $this->groupManager->get($name);
+
+			if ($group !== null) {
+				return $this->groupToPrincipal($group);
+			}
 		}
+
 		return null;
 	}
 
@@ -134,13 +147,24 @@ class Principal implements BackendInterface {
 	 * @throws Exception
 	 */
 	public function getGroupMemberSet($principal) {
-		// TODO: for now the group principal has only one member, the user itself
 		$principal = $this->getPrincipalByPath($principal);
 		if (!$principal) {
 			throw new Exception('Principal not found');
 		}
 
-		return [$principal['uri']];
+		list($prefix, $gid) = \Sabre\Uri\split($principal['uri']);
+		if ($prefix !== $this->groupPrincipalPrefix) {
+			throw new Exception('Requested members for principal that\'s not a group');
+		}
+
+		$group = $this->groupManager->get($gid);
+		$users = $group->getUsers();
+		$members = [];
+		foreach($users as $user) {
+			$members[] = $this->userToPrincipal($user)['uri'];
+		}
+
+		return $members;
 	}
 
 	/**
@@ -332,7 +356,7 @@ class Principal implements BackendInterface {
 	 * @param IUser $user
 	 * @return array
 	 */
-	protected function userToPrincipal($user) {
+	protected function userToPrincipal(IUser $user) {
 		$userId = $user->getUID();
 		$displayName = $user->getDisplayName();
 		$principal = [
@@ -346,6 +370,20 @@ class Principal implements BackendInterface {
 		}
 
 		return $principal;
+	}
+
+	/**
+	 * @param IGroup $group
+	 * @return array
+	 */
+	protected function groupToPrincipal(IGroup $group) {
+		$groupId = $group->getGID();
+		$displayName = $group->getDisplayName();
+
+		return [
+			'uri' => $this->groupPrincipalPrefix . '/' . $groupId,
+			'{DAV:}displayname' => is_null($displayName) ? $groupId : $displayName,
+		];
 	}
 
 	public function getPrincipalPrefix() {

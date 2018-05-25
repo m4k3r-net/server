@@ -26,13 +26,30 @@ namespace OCA\DAV\CalDAV\Schedule;
 
 use OCA\DAV\CalDAV\CalDavBackend;
 use OCA\DAV\CalDAV\CalendarHome;
+use OCA\DAV\Connector\Sabre\Principal;
 use Sabre\DAV\INode;
 use Sabre\DAV\PropFind;
 use Sabre\DAV\Server;
 use Sabre\DAV\Xml\Property\LocalHref;
 use Sabre\DAVACL\IPrincipal;
+use Sabre\HTTP\RequestInterface;
+use Sabre\HTTP\ResponseInterface;
+use Sabre\VObject\Component\VCalendar;
+use Sabre\VObject\Reader;
 
 class Plugin extends \Sabre\CalDAV\Schedule\Plugin {
+
+	/** @var Principal */
+	protected $principalBackend;
+
+	/**
+	 * Plugin constructor.
+	 *
+	 * @param Principal $principalBackend
+	 */
+	public function __construct(Principal $principalBackend) {
+		$this->principalBackend = $principalBackend;
+	}
 
 	/**
 	 * Initializes the plugin
@@ -59,6 +76,71 @@ class Plugin extends \Sabre\CalDAV\Schedule\Plugin {
 		}
 
 		return $result;
+	}
+
+	/**
+	 * This method is triggered whenever there was a calendar object gets
+	 * created or updated.
+	 *
+	 * @param RequestInterface $request HTTP request
+	 * @param ResponseInterface $response HTTP Response
+	 * @param VCalendar $vCal Parsed iCalendar object
+	 * @param mixed $calendarPath Path to calendar collection
+	 * @param mixed $modified The iCalendar object has been touched.
+	 * @param mixed $isNew Whether this was a new item or we're updating one
+	 * @return void
+	 */
+	function calendarObjectChange(RequestInterface $request, ResponseInterface $response, VCalendar $vCal, $calendarPath, &$modified, $isNew) {
+
+		if (!$this->scheduleReply($this->server->httpRequest)) {
+			return;
+		}
+
+		/** @var \OCA\DAV\CalDAV\Calendar $calendarNode */
+		$calendarNode = $this->server->tree->getNodeForPath($calendarPath);
+
+		$addresses = [];
+		$addresses[] = $this->getAddressesForPrincipal(
+			$calendarNode->getOwner()
+		);
+
+		// get writable calendar shares
+		$shares = $calendarNode->getAllShares();
+		foreach($shares as $share) {
+			if ($share['readOnly']) {
+				continue;
+			}
+
+			if (strpos($share['{http://owncloud.org/ns}principal'], 'principals/users/') === 0) {
+				$addresses[] = $this->getAddressesForPrincipal($share['{http://owncloud.org/ns}principal']);
+			} elseif (strpos($share['{http://owncloud.org/ns}principal'], 'principals/groups/') === 0) {
+				try {
+					$members = $this->principalBackend->getGroupMemberSet($share['{http://owncloud.org/ns}principal']);
+					foreach ($members as $member) {
+						$addresses[] = $this->getAddressesForPrincipal($member);
+					}
+				} catch(\Sabre\Dav\Exception $ex) {
+					continue;
+				}
+			}
+		}
+
+		$addresses = array_merge(...$addresses);
+
+		if (!$isNew) {
+			$node = $this->server->tree->getNodeForPath($request->getPath());
+			$oldObj = Reader::read($node->get());
+		} else {
+			$oldObj = null;
+		}
+
+		$this->processICalendarChange($oldObj, $vCal, $addresses, [], $modified);
+
+		if ($oldObj) {
+			// Destroy circular references so PHP will GC the object.
+			$oldObj->destroy();
+		}
+
 	}
 
 	/**
@@ -97,5 +179,20 @@ class Plugin extends \Sabre\CalDAV\Schedule\Plugin {
 				return new LocalHref($result[0]['href']);
 			});
 		}
+	}
+
+	/**
+	 * This method checks the 'Schedule-Reply' header
+	 * and returns false if it's 'F', otherwise true.
+	 *
+	 * Copied from Sabre/DAV's Schedule plugin, because it's
+	 * private for whatever reason
+	 *
+	 * @param RequestInterface $request
+	 * @return bool
+	 */
+	private function scheduleReply(RequestInterface $request) {
+		$scheduleReply = $request->getHeader('Schedule-Reply');
+		return $scheduleReply !== 'F';
 	}
 }

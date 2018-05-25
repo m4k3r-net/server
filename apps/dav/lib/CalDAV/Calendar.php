@@ -104,6 +104,10 @@ class Calendar extends \Sabre\CalDAV\Calendar implements IShareable {
 		return $this->caldavBackend->getShares($this->getResourceId());
 	}
 
+	public function getAllShares() {
+		return $this->caldavBackend->getShares($this->getResourceId());
+	}
+
 	/**
 	 * @return int
 	 */
